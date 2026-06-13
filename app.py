@@ -1,5 +1,6 @@
 from flask import Flask, request, jsonify
 import requests
+import json
 
 app = Flask(__name__)
 
@@ -14,23 +15,31 @@ HEADERS = {
 @app.route('/webhook', methods=['POST', 'GET'])
 def webhook():
     data = request.get_json(force=True, silent=True) or {}
-    
+    print(f"RECEIVED DATA: {json.dumps(data)}", flush=True)
+
     phone = str(data.get('chat_id', ''))
     name = data.get('first_name', 'WhatsApp клиент')
     text = data.get('user_message', '')
 
+    print(f"PHONE: {phone}, NAME: {name}, TEXT: {text}", flush=True)
+
     if not phone:
+        print("NO PHONE - EXIT", flush=True)
         return jsonify({'status': 'no phone'}), 200
 
     phone = ''.join(filter(str.isdigit, phone))
+    print(f"CLEAN PHONE: {phone}", flush=True)
 
     # Поиск контакта
     r = requests.get(
         f'https://{AMO_DOMAIN}/api/v4/contacts?query={phone}',
         headers=HEADERS
     )
-    contacts = r.json().get('_embedded', {}).get('contacts', [])
+    print(f"SEARCH RESPONSE: {r.status_code} {r.text[:200]}", flush=True)
+    
+    contacts = r.json().get('_embedded', {}).get('contacts', []) if r.status_code == 200 else []
     contact_id = contacts[0]['id'] if contacts else None
+    print(f"CONTACT ID: {contact_id}", flush=True)
 
     if contact_id:
         r2 = requests.get(
@@ -51,14 +60,19 @@ def webhook():
             headers=HEADERS,
             json=[{'name': name, 'custom_fields_values': [{'field_code': 'PHONE', 'values': [{'value': phone, 'enum_code': 'WORK'}]}]}]
         )
-        new_contacts = r3.json().get('_embedded', {}).get('contacts', [])
+        print(f"CREATE CONTACT RESPONSE: {r3.status_code} {r3.text[:300]}", flush=True)
+        
+        new_contacts = r3.json().get('_embedded', {}).get('contacts', []) if r3.status_code in [200, 201] else []
         contact_id = new_contacts[0]['id'] if new_contacts else None
+        print(f"NEW CONTACT ID: {contact_id}", flush=True)
+        
         if contact_id:
-            requests.post(
+            r4 = requests.post(
                 f'https://{AMO_DOMAIN}/api/v4/leads',
                 headers=HEADERS,
                 json=[{'name': f'WhatsApp: {name}', '_embedded': {'contacts': [{'id': contact_id}]}}]
             )
+            print(f"CREATE LEAD RESPONSE: {r4.status_code} {r4.text[:300]}", flush=True)
 
     return jsonify({'status': 'ok'}), 200
 
